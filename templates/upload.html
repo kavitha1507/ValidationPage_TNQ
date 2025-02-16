@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>File Upload</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-image: url('/static/background.jpg'); /* Background image from static folder */
+            background-size: cover;
+            background-position: center;
+            margin: 0;
+            padding: 0;
+        }
+        form {
+            background-color: rgba(77, 136, 146, 0.8); /* Light background for the form */
+            padding: 20px;
+            border-radius: 10px;
+            width: 300px;
+            margin: 100px auto;
+            text-align: center;
+        }
+        h2 {
+            text-align: center;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <h2>Validation Page for Configuration</h2>
+    <form action="/" method="post" enctype="multipart/form-data">
+        <label for="excel_file">Choose Configuration File:</label>
+        <input type="file" id="excel_file" name="excel_file" required><br><br>
+        <label for="sql_dump_file">Choose SQL Dump File:</label>
+        <input type="file" id="sql_dump_file" name="sql_dump_file" required><br><br>
+        <input type="submit" value="Upload">
+    </form>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparison Results</title>
+</head>
+<body>
+    <h1>Comparison Results</h1>
+    <table border="1">
+        <tr>
+            <th>Excel_key</th>
+            <th>Excel_value</th>
+            <th>DB_value</th>
+            <th>Status</th>
+        </tr>
+        {% for row in results %}
+        <tr>
+            <td>{{ row.Excel_key }}</td>
+            <td>{{ row.Excel_value }}</td>
+            <td>{{ row.DB_value }}</td>
+            <td>{{ row.Status }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
