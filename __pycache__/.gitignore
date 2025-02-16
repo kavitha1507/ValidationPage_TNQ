@@ -1,0 +1,14 @@
+# .gitignore
+
+# Python-related files
+*.pyc
+__pycache__/
+
+# Virtual environment
+venv/
+*.env
+
+# Docker-related files
+*.log
+*.pid
+*.sock
