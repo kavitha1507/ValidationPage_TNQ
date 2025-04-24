@@ -1,9 +1,11 @@
 from flask import Flask, render_template, request
 import pandas as pd
 import os
+import re
+import html
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads/'  # Directory to save uploaded files
+app.config['UPLOAD_FOLDER'] = 'uploads/'  
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Load Excel file
@@ -20,21 +22,33 @@ def parse_sql_dump(file_path):
         sql_data = file.read()
     return sql_data
 
+def detect_special_characters(text):
+    decoded_text = html.unescape(text)  # Decode HTML entities (e.g., &#xae; => ®)
+    
+    # Define characters that need escaping or are considered invalid
+    invalid_characters = ["'", "’", "‘", "–", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "=","®"]
+    
+    # Check for invalid characters
+    invalid_chars = [char for char in invalid_characters if char in decoded_text]
+    
+    return invalid_chars
+
+def escape_special_characters(text):
+    # Escape apostrophes to match DB format
+    return text.replace("'", "\\'")
 # Fetch single data from SQL dump based on JID
 def fetch_data_from_sql_dump(jid, sql_dump):
     db_row = {}
 
     # For `Journals` table
-    # Extract JID and Expansion from `Journals` table
     sql_dump_journals = sql_dump.split("INSERT INTO `pcv3_elsevier_books`.`Journals`")[1]
     journals_parts = sql_dump_journals.split("VALUES")[1].strip()
     journals_values = journals_parts.strip('();').split(',')
     
     db_row['JID'] = journals_values[0].strip().strip("'")  # JID is the first value
-    db_row['Expansion'] = journals_values[3].strip().strip('"')  # Expansion is the fourth value
+    db_row['Expansion'] = journals_values[3].strip().strip('"').strip("'")  # Expansion is the fourth value
 
     # For `journal_attributes` table
-    # Extract editionNumber and cslStylePath from `journal_attributes` table
     sql_dump_attributes = sql_dump.split("INSERT INTO `pcv3_elsevier_books`.`journal_attributes`")[1]
     attributes_lines = sql_dump_attributes.split("VALUES")[1].strip().split("),")
     for line in attributes_lines:
@@ -50,12 +64,34 @@ def fetch_data_from_sql_dump(jid, sql_dump):
     return db_row
 
 # Compare values and format the result
+def escape_for_db(text):
+    if not isinstance(text, str):
+        return text
+
+    replacements = {
+        "'": "\\'",
+        "®": "&#xae;",
+        "–": "&#x2013;",   # en dash
+        "’": "\\'",        # curly apostrophe to escaped straight apostrophe
+        "“": "&ldquo;",
+        "”": "&rdquo;",
+        "©": "&#xa9;",
+        "™": "&#x2122;",
+        # Add more as needed
+    }
+
+    for char, html_entity in replacements.items():
+        text = text.replace(char, html_entity)
+
+    return text
+
+
 def compare_values(excel_row, db_row):
     comparison_results = []
 
     def normalize_value(value):
         if isinstance(value, str):
-            return ' '.join(value.split())  # Removes extra spaces, newlines, and tabs
+            return ' '.join(value.split())
         return value
 
     # Compare Formatted ISBN with JID
@@ -63,46 +99,67 @@ def compare_values(excel_row, db_row):
         'Excel_key': 'Formatted ISBN',
         'Excel_value': excel_row['Formatted ISBN'],
         'DB_value': db_row['JID'],
-        'Status': 'same' if str(excel_row['Formatted ISBN']) == str(db_row['JID']) else 'mismatch'
+        'Status': 'same' if str(excel_row['Formatted ISBN']) == str(db_row['JID']) else 'mismatch',
+        'Error': ''
     })
 
-    # Compare Book Title with Expansion
+    # Compare Book Title with Expansion (escaped)
+    excel_title = normalize_value(str(excel_row['Book Title']))
+    db_title = normalize_value(str(db_row['Expansion']))
+    expected_title = escape_for_db(excel_title)
+    
+    status = 'same' if expected_title == db_title else 'mismatch'
+    error_msg = ''
+    if status == 'mismatch':
+        error_msg = f"Expected: {expected_title}"
+
     comparison_results.append({
         'Excel_key': 'Book Title',
-        'Excel_value': excel_row['Book Title'],
-        'DB_value': db_row['Expansion'],
-        'Status': 'same' if str(excel_row['Book Title']) == str(db_row['Expansion']) else 'mismatch'
+        'Excel_value': excel_title,
+        'DB_value': db_title,
+        'Status': status,
+        'Error': error_msg
     })
 
-    # Compare Edition No. with editionNumber
+    # Edition No.
     comparison_results.append({
         'Excel_key': 'Edition No.',
         'Excel_value': excel_row['Edition No.'],
         'DB_value': db_row['editionNumber'],
-        'Status': 'same' if str(excel_row['Edition No.']) == str(db_row['editionNumber']) else 'mismatch'
+        'Status': 'same' if str(excel_row['Edition No.']) == str(db_row['editionNumber']) else 'mismatch',
+        'Error': ''
     })
 
-    # Compare Reference style with cslStylePath using the mapping
+    # Reference style
     reference_style_mapping = {
         'APA 7th': 'csl/elsevier-apa-7th-edition.csl',
         'Harvard': 'csl/elsevier-harvard.csl',
-        'Vancouver Numbered': 'csl/elsevier-vancouver-numbered.csl', 
+        'Vancouver Numbered': 'csl/elsevier-vancouver-numbered.csl',
+        'Numbered': 'csl/elsevier-with-titles.csl',
+        'AMA': 'csl/ama.csl',
+        'Embellished_Vancouver': 'csl/elsevier-vancouver-embellish.csl',
+        'Vancouver_nameAndYear': 'csl/elsevier-vancouver-author-date.csl',
+        'APA': 'csl/apa.csl',
+        'Saunders_nameAndYear':'csl/saunders-author.csl',
+        'Saunders_numbered':'csl/saunders-number.csl',
+        'ACS':'csl/acs.csl',
+        'ACS_nameAndYear':'csl/acs-author-date.csl'
     }
 
-    excel_reference_style = normalize_value(excel_row['Reference style (Numbered/Harvard/Vancouver Numbered/AMA/APA/Vancouver Name/Year)'])
-    db_csl_style_path = normalize_value(db_row['cslStylePath'])
 
-    if excel_reference_style in reference_style_mapping:
-        expected_csl_style = reference_style_mapping[excel_reference_style]
-        status = 'same' if normalize_value(expected_csl_style) == db_csl_style_path else 'mismatch'
-    else:
-        status = 'mismatch'
+    excel_ref = normalize_value(excel_row['Reference style (Numbered/Harvard/Vancouver Numbered/AMA/APA/Vancouver Name/Year)'])
+    db_csl = normalize_value(db_row['cslStylePath'])
+    expected_csl = reference_style_mapping.get(excel_ref, '')
+
+    ref_status = 'same' if expected_csl == db_csl else 'mismatch'
+    ref_error = f"Expected: {expected_csl}" if ref_status == 'mismatch' else ''
 
     comparison_results.append({
         'Excel_key': 'Reference style',
-        'Excel_value': excel_reference_style,
-        'DB_value': db_csl_style_path,
-        'Status': status
+        'Excel_value': excel_ref,
+        'DB_value': db_csl,
+        'Status': ref_status,
+        'Error': ref_error
     })
 
     return comparison_results
@@ -110,46 +167,46 @@ def compare_values(excel_row, db_row):
 @app.route('/', methods=['GET', 'POST'])
 def upload_and_compare():
     if request.method == 'POST':
-        # Handle Excel file upload
+        # Check if both files are provided
         if 'excel_file' not in request.files or 'sql_dump_file' not in request.files:
             return "No file part in the request", 400
-        
+
         excel_file = request.files['excel_file']
         sql_dump_file = request.files['sql_dump_file']
-        
+
+        # Check if both files are selected
         if excel_file.filename == '' or sql_dump_file.filename == '':
             return "No file chosen", 400
-        
+
         if excel_file and sql_dump_file:
-            # Save uploaded files
+            # Save files to the uploads directory
             excel_file_path = os.path.join(app.config['UPLOAD_FOLDER'], excel_file.filename)
             sql_dump_file_path = os.path.join(app.config['UPLOAD_FOLDER'], sql_dump_file.filename)
             excel_file.save(excel_file_path)
             sql_dump_file.save(sql_dump_file_path)
-            
-            # Load Excel data
+
+            # Load Excel and SQL data
             config_df = load_excel_config(excel_file_path)
-            
-            # Load the SQL dump
             sql_dump = parse_sql_dump(sql_dump_file_path)
-            
-            # Select a specific row from Excel (without loop)
+
+            # Process only the first row from Excel
             excel_row = config_df.iloc[0]
-            
-            # Fetch corresponding SQL dump data for the JID in the Excel row
-            FormattedISBN = excel_row['Formatted ISBN']
-            db_row = fetch_data_from_sql_dump(FormattedISBN, sql_dump)
-            
+            formatted_isbn = str(excel_row['Formatted ISBN'])
+
+            # Fetch data from SQL dump based on Formatted ISBN
+            db_row = fetch_data_from_sql_dump(formatted_isbn, sql_dump)
+
             if db_row:
-                # Compare values and get results
+                # Compare and get results including error details
                 comparison_results = compare_values(excel_row, db_row)
-                
-                # Display results
+
+                # Render the result page with detailed comparison
                 return render_template('results.html', results=comparison_results)
             else:
-                return "No matching data in SQL dump for the provided Formatted ISBN", 400
+                return f"No matching data in SQL dump for Formatted ISBN: {formatted_isbn}", 400
 
     return render_template('upload.html')
+
 
 if __name__ == '__main__':
     app.run(debug=True)
