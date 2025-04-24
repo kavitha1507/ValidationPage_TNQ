@@ -1,33 +1,67 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
     <title>Comparison Results</title>
     <style>
-        table { border-collapse: collapse; width: 80%; margin: auto; }
-        th, td { border: 1px solid #999; padding: 8px; text-align: left; }
-        th { background-color: #f2f2f2; }
-        .mismatch { background-color: #ffe6e6; }
+        body { font-family: Arial, sans-serif; padding: 20px; background-color: #f8f9fa; }
+        h1 { color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ccc; padding: 10px; text-align: left; }
+        th { background-color: #007bff; color: white; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        .mismatch { background-color: #f8d7da; }
+        .info { background-color: #fff3cd; }
+        .same { background-color: #d4edda; }
+        img { max-height: 150px; }
+        .error-message { color: #d9534f; font-weight: bold; }
     </style>
 </head>
 <body>
-    <h2 style="text-align:center;">Comparison Results</h2>
-    <table>
+    <h1>Comparison Results</h1>
+
+    <table border="1">
         <tr>
-            <th>Field</th>
-            <th>Excel Value</th>
-            <th>DB Value</th>
-            <th>Status</th>
-            <th>Error</th>
+          <th>Field</th>
+          <th>Excel Value</th>
+          <th>DB Value</th>
+          <th>Status</th>
+          <th>Error</th>
         </tr>
-        {% for row in results %}
-        <tr class="{{ 'mismatch' if row['Status'] == 'mismatch' else '' }}">
-            <td>{{ row['Excel_key'] }}</td>
-            <td>{{ row['Excel_value'] }}</td>
-            <td>{{ row['DB_value'] }}</td>
-            <td>{{ row['Status'] }}</td>
-            <td>{{ row['Error'] }}</td>
+        {% for result in results %}
+        <tr>
+          <td>{{ result.Excel_key }}</td>
+          
+          <td>
+            {% if result.Excel_value %}
+              {{ result.Excel_value }}
+            {% else %}
+              NA
+            {% endif %}
+          </td>
+      
+          <td>
+            {% if result.DB_value %}
+              {{ result.DB_value }}
+            {% else %}
+              NA
+            {% endif %}
+          </td>
+      
+          <td>{{ result.Status }}</td>
+          
+          <td>
+            {% if result.Excel_key == 'Journal cover image' and result.Image_URL %}
+              <img src="{{ result.Image_URL }}" alt="Cover Image" width="100">
+            {% else %}
+              {{ result.Error }}
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
-    </table>
+      </table>
+      
+
+    <br>
+    <a href="/">Go Back</a>
 </body>
 </html>
