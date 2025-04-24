@@ -22,20 +22,6 @@ def parse_sql_dump(file_path):
         sql_data = file.read()
     return sql_data
 
-def detect_special_characters(text):
-    decoded_text = html.unescape(text)  # Decode HTML entities (e.g., &#xae; => ®)
-    
-    # Define characters that need escaping or are considered invalid
-    invalid_characters = ["'", "’", "‘", "–", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "=","®"]
-    
-    # Check for invalid characters
-    invalid_chars = [char for char in invalid_characters if char in decoded_text]
-    
-    return invalid_chars
-
-def escape_special_characters(text):
-    # Escape apostrophes to match DB format
-    return text.replace("'", "\\'")
 # Fetch single data from SQL dump based on JID
 def fetch_data_from_sql_dump(jid, sql_dump):
     db_row = {}
@@ -163,6 +149,9 @@ def compare_values(excel_row, db_row):
     })
 
     return comparison_results
+
+
+
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_and_compare():
