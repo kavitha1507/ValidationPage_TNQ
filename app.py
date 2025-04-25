@@ -3,6 +3,48 @@ import pandas as pd
 import os
 import re
 import html
+import boto3
+from botocore.exceptions import NoCredentialsError
+import nacl.secret
+import nacl.utils
+import base64
+from flask import Flask
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Read and decode key from .env
+key_base64 = os.getenv('LIBSODIUM_KEY')
+if not key_base64:
+    raise ValueError("LIBSODIUM_KEY is missing in the .env file")
+
+key = base64.b64decode(key_base64)
+box = nacl.secret.SecretBox(key)
+key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)
+box = nacl.secret.SecretBox(key)
+
+key = nacl.utils.random(nacl.secret.SecretBox.KEY_SIZE)  # 32 bytes
+box = nacl.secret.SecretBox(key)
+
+def encrypt_with_libsodium(message: str) -> str:
+    nonce = nacl.utils.random(nacl.secret.SecretBox.NONCE_SIZE)
+    encrypted = box.encrypt(message.encode(), nonce)
+    return base64.b64encode(encrypted).decode()
+
+def decrypt_with_libsodium(encoded_cipher: str) -> str:
+    cipher = base64.b64decode(encoded_cipher)
+    decrypted = box.decrypt(cipher)
+    return decrypted.decode()
+
+def generate_presigned_url(bucket, key, expiration=3600):
+    s3_client = boto3.client('s3')
+    try:
+        url = s3_client.generate_presigned_url('get_object',
+                                               Params={'Bucket': bucket, 'Key': key},
+                                               ExpiresIn=expiration)
+        return url
+    except NoCredentialsError:
+        return None
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads/'
@@ -91,16 +133,29 @@ def compare_values(excel_row, db_row):
             return str(int(val))  # convert 1.0 to '1'
         return ' '.join(str(val).split())  # remove extra whitespace
 
-    # Compare Formatted ISBN with JID
-    comparison_results.append({
-        'Excel_key': 'Formatted ISBN',
-        'Excel_value': normalize_value(excel_row['Formatted ISBN']),
-        'DB_value': normalize_value(db_row['JID']),
-        'Status': 'same' if normalize_value(excel_row['Formatted ISBN']) == normalize_value(db_row['JID']) else 'mismatch',
-        'Error': ''
-    })
+    # --- Compare Formatted ISBN with JID (with space validation) ---
+    excel_jid = normalize_value(excel_row['Formatted ISBN']).strip()
+    db_jid_raw = db_row['JID']
+    db_jid = normalize_value(db_jid_raw).strip()
 
-    # Compare Book Title
+    status = 'same' if excel_jid == db_jid else 'mismatch'
+
+# Detect leading/trailing spaces in DB value
+    if db_jid_raw != db_jid:
+        error_msg = f"DB JID has leading/trailing spaces. Expected: '{excel_jid}', Found: '{db_jid_raw}'"
+    elif status == 'mismatch':
+        error_msg = f"Expected: '{excel_jid}'"
+    else:
+        error_msg = ''
+
+    comparison_results.append({
+    'Excel_key': 'Formatted ISBN',
+    'Excel_value': excel_jid,
+    'DB_value': db_jid_raw,
+    'Status': status,
+    'Error': error_msg
+    })
+        # Compare Book Title
     excel_title = normalize_value(excel_row['Book Title'])
     db_title = normalize_value(db_row['Expansion'])
     expected_title = escape_for_db(excel_title)
@@ -188,6 +243,38 @@ def compare_values(excel_row, db_row):
 
     comparison_results.append(cover_result)
 
+    if db_cover:
+        s3_url = generate_presigned_url('pcv3-elsbook-live', db_cover)
+        cover_result['Image_URL'] = s3_url
+
+     # PM name
+        excel_PM = normalize_value(excel_row['New PM Internal/External'])
+        db_PM_encrypted = normalize_value(db_row.get('projectManagerName', ''))
+
+        try:
+            db_PM_decrypted = decrypt_with_libsodium(db_PM_encrypted)
+            pm_status = 'same' if db_PM_decrypted == excel_PM else 'mismatch'
+            pm_error = '' if pm_status == 'same' else f"Expected: {excel_PM}"
+
+            comparison_results.append({
+            'Excel_key': 'New PM Internal/External',
+            'Excel_value': excel_PM,
+            'DB_value': db_PM_encrypted,
+            'Decrypted_value': db_PM_decrypted,
+            'Status': pm_status,
+            'Error': pm_error,
+            'Needs_Decrypt': True  # for UI
+            })
+        except Exception as e:
+            comparison_results.append({
+            'Excel_key': 'New PM Internal/External',
+            'Excel_value': excel_PM,
+            'DB_value': db_PM_encrypted,
+            'Status': 'error',
+            'Error': str(e),
+            'Needs_Decrypt': True
+            })
+
 
     return comparison_results
 
@@ -226,3 +313,15 @@ def upload_and_compare():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+@app.route('/decrypt', methods=['POST'])
+def decrypt_handler():
+    from flask import redirect, url_for, flash
+    ciphertext = request.form['ciphertext']
+    try:
+        decrypted = decrypt_with_libsodium(ciphertext)
+        flash(f'Decrypted value: {decrypted}')
+    except Exception as e:
+        flash(f'Decryption failed: {str(e)}')
+    return redirect(url_for('upload_and_compare'))
